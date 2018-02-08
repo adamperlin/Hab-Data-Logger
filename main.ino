@@ -144,15 +144,3 @@ void convertDouble(double d, char *buf, size_t buf_len) {
   buf[buf_len-1] = '\0';
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
