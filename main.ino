@@ -33,14 +33,15 @@ void setup() {
   delay(1000);
 }
 
+long currentTime = 0L;
+
 void loop() {
   // put your main code here, to run repeatedly:
-  Serial.println("Hello");
-
-  char buf[10];
-  double f;
-  convertDouble(f, buf, sizeof buf);
-  delay(100);
+  pollSensors();
+  checkAltimeter();
+  // Do any other necessary repetitive tasks
+  currentTime = millis();
+  delay(1000);
 }
 
 
@@ -107,6 +108,10 @@ double alt;
 unsigned int alt_index = 0;
 double radiation = 0;
 
+// do nothing for the moment. This will eventually actuate a servo at a certain altitude;
+void checkAltimeter() {
+  return;
+}
 
 void pollSensors() {
   linearAccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
