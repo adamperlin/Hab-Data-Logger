@@ -134,7 +134,7 @@ void pollSensors() {
   convertDouble(alt, altBuf, sizeof altBuf);
   convertDouble(radiation, radBuf, sizeof radBuf);
 
-  snprintf(LINE_FMT, line, xAccel, yAccel, zAccel, gXAccel, gYAccel, gZAccel, altBuf, radBuf);
+  snprintf(line, sizeof line, LINE_FMT, xAccel, yAccel, zAccel, gXAccel, gYAccel, gZAccel, altBuf, radBuf);
   dataFile.println(line);
 }
 
