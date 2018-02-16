@@ -13,7 +13,13 @@
 #define SD_DATA_FILE "data.txt"
 #define SEATTLE_BASELINE_ATM 102710.0
 
+#define POLL_DELAY 15000
 
+#define LOG_PERIOD 15000  //Logging period in milliseconds, recommended value 15000-60000.
+#define MAX_PERIOD 60000
+#define TIME_PERIOD_MULTIPLIER (MAX_PERIOD / LOG_PERIOD)
+
+#define CPM_CONVERSION_FACTOR (1.0/151.0)
 /*
  * GLOBAL classes
  */
@@ -23,20 +29,29 @@ Adafruit_MPL3115A2 baro = Adafruit_MPL3115A2();
 
 File dataFile;
 
+unsigned long currentTime = 0L;
+unsigned long previousTime = 0L;
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
-  Serial.println("Beginning initialization...");
+  Serial.println(F("Beginning initialization..."));
   devicesInit();
-  Serial.println("Initialization Finished");
+  Serial.println(F("Initialization Finished"));
 
-  for (int i = 0; i < 10; ++i) {
+  
+  for (int i = 0; i < 3; ++i) {
+      previousTime = currentTime;
+      currentTime = millis();
       pollSensors();
-      delay(1000);
+      delay(POLL_DELAY);
   }
 
   Serial.println("Test data read: ");
   testDataRead();
+
+  currentTime = 0L;
+  previousTime = 0L;
   
   delay(1000);
 }
@@ -50,37 +65,33 @@ void testDataRead() {
 }
 
 void removeDataFileIfExists() {
-  if (SD.exists("data.txt")) {
-    SD.remove("data.txt");
+  if (SD.exists(SD_DATA_FILE)) {
+    SD.remove(SD_DATA_FILE);
   }
 }
 
 void initIMU() {
   if (!bno.begin()) {
-    Serial.println("No BNO055 detected... idling");
+    Serial.println(F("No BNO055 detected... idling"));
     while(1);
   }
 }
 void initAltimeter(){
   if (!baro.begin()) {
-      Serial.println("No Altimeter Detected... idling");
+      Serial.println(F("No Altimeter Detected... idling"));
       while(1);
   }
   baro.setSeaPressure(SEATTLE_BASELINE_ATM);
 }
 
-void devicesInit() {
-  initIMU();
-  initAltimeter();
-  initSD();
-}
 
-const char CSV_HEADER[] = {"time,linAccelX,linAccelY,linAccelZ,gravitAccelX,gravitAccelY,gravitAccelZ,alt,rad"};
+
+const char CSV_HEADER[] = {"time,linAccelX,linAccelY,linAccelZ,gravitAccelX,gravitAccelY,gravitAccelZ,alt,temp,pressure,rad"};
 
 void initSD() {
   pinMode(SD_PIN, OUTPUT);
   if (!SD.begin(SD_PIN)) {
-    Serial.println("SD Card not present!");
+    Serial.println(F("SD Card not present!"));
     while(1);
   }
 
@@ -88,7 +99,7 @@ void initSD() {
 
   dataFile = SD.open(SD_DATA_FILE, FILE_WRITE);
   if (!dataFile) {
-    Serial.println("Error opening SD data file!");
+    Serial.println(F("Error opening SD data file!"));
     while(1);
   }
 
@@ -97,16 +108,33 @@ void initSD() {
   dataFile.close();
 }
 
+int geigerCounts = 0;
 
-long currentTime = 0L;
+
+void tube_impulse_handler() {
+  geigerCounts++;
+} 
+
+void initGeiger() {
+  attachInterrupt(0, tube_impulse_handler, FALLING);
+}
+
+void devicesInit() {
+  initIMU();
+  initAltimeter();
+  initSD();
+  initGeiger();
+}
 
 
 void loop() {
   // put your main code here, to run repeatedly:
+
+  previousTime = currentTime;
+  currentTime = millis();
   pollSensors();
   checkAltimeter();
-  currentTime = millis();
-  delay(1000);
+  delay(POLL_DELAY);
 }
 
 
@@ -119,7 +147,9 @@ imu::Vector<3> linearAccel;
 double altimeterValues[PREVIOUS_POINTS];
 double alt;
 unsigned int alt_index = 0;
-double radiation = 0;
+double microSieverts = 0.0;
+double temp = 0.0;
+double pressure = 0.0;
 
 // do nothing for the moment. This will eventually actuate a servo at a certain altitude;
 
@@ -132,11 +162,15 @@ void pollSensors() {
 	linearAccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
   gravitAccel = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
   alt = baro.getAltitude();
+  temp = baro.getTemperature();
+  pressure = baro.getPressure();
 
   for (int i = 1; i < PREVIOUS_POINTS; i++) {
     altimeterValues[i] = altimeterValues[i - 1];
   }
   altimeterValues[0] = alt;
+
+  //read from geiger counter 
 
  /* dataFile.print(currentTime, DEC);
   dataFile.print(SEP);*/
@@ -151,8 +185,24 @@ void pollSensors() {
   writeCSVPoint(gravitAccel.z());
   
   writeCSVPoint(alt);
-  writeCSVLastPoint(radiation);
-  Serial.println("write finished");
+  writeCSVPoint(temp);
+  writeCSVPoint(pressure);  
+
+  if(currentTime - previousTime > LOG_PERIOD) {
+    Serial.println(F("logging"));
+    Serial.println(F("uSV: "));
+    Serial.println(microSieverts, DEC);
+    Serial.println(currentTime - previousTime, DEC);
+    microSieverts = geigerCounts * TIME_PERIOD_MULTIPLIER * CPM_CONVERSION_FACTOR;
+    // reset geigerCounts
+
+    geigerCounts = 0;
+  } 
+
+  writeCSVLastPoint(microSieverts);
+
+
+  Serial.println(F("write finished"));
 }
 
 void writeCSVPoint(double data) {
