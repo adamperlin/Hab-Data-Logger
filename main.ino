@@ -5,9 +5,20 @@
 #include <utility/imumaths.h>
 #include <SD.h>
 
+/** Main Data logger sketch for HAB crew #2
+ * 
+ * Sensors in this version:
+ * 
+ * Adafruit Altimeter Combo MPL311A2
+ * Adafruit BNO055 IMU
+ * Geiger Counter
+ * Adafruit microSD Card Shield
+ */
+
 /*
  * CONSTANTS
  */
+ 
 #define SD_PIN 10 //can change
 #define IMU_SENSOR_ID 55
 #define SD_DATA_FILE "data.txt"
@@ -20,6 +31,8 @@
 #define TIME_PERIOD_MULTIPLIER (MAX_PERIOD / LOG_PERIOD)
 
 #define CPM_CONVERSION_FACTOR (1.0/151.0)
+#define SWITCH_PIN 4
+
 /*
  * GLOBAL classes
  */
@@ -27,19 +40,26 @@
 Adafruit_BNO055 bno = Adafruit_BNO055(IMU_SENSOR_ID);
 Adafruit_MPL3115A2 baro = Adafruit_MPL3115A2();
 
+// main output file
 File dataFile;
 
 unsigned long currentTime = 0L;
 unsigned long previousTime = 0L;
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(9600);
   Serial.println(F("Beginning initialization..."));
   devicesInit();
+
+  pinMode(SWITCH_PIN, INPUT);
   Serial.println(F("Initialization Finished"));
 
-  
+  // this is a test; it simulates the arduino loop and writes 3 points to the SD Card before
+  // reading them back with testDataRead()
+
+  /**
+   * Test
+   */
   for (int i = 0; i < 3; ++i) {
       previousTime = currentTime;
       currentTime = millis();
@@ -47,13 +67,22 @@ void setup() {
       delay(POLL_DELAY);
   }
 
-  Serial.println("Test data read: ");
+  Serial.println(F("Test data read: "));
   testDataRead();
 
+  // reset timekeeping variables so we can actually start the program
   currentTime = 0L;
   previousTime = 0L;
+  /**
+   * End Test
+   */
   
   delay(1000);
+}
+
+// check if switch is on or off
+bool checkSwitch() {
+  return digitalRead(SWITCH_PIN) == HIGH;
 }
 
 void testDataRead() {
@@ -81,6 +110,9 @@ void initAltimeter(){
       Serial.println(F("No Altimeter Detected... idling"));
       while(1);
   }
+
+  // we use Seattle atmospheric pressure at Sea level as our baseline
+  // In the end, it doesn't really matter; we're just looking at delta altitude
   baro.setSeaPressure(SEATTLE_BASELINE_ATM);
 }
 
@@ -95,6 +127,7 @@ void initSD() {
     while(1);
   }
 
+  // clear file so we don't add to existing
   removeDataFileIfExists();
 
   dataFile = SD.open(SD_DATA_FILE, FILE_WRITE);
@@ -110,11 +143,11 @@ void initSD() {
 
 int geigerCounts = 0;
 
-
 void tube_impulse_handler() {
   geigerCounts++;
 } 
 
+// attaches counter impulse handler to interrupt 0, which is on digital pin 2
 void initGeiger() {
   attachInterrupt(0, tube_impulse_handler, FALLING);
 }
@@ -144,6 +177,9 @@ void loop() {
 imu::Vector<3> gravitAccel;
 imu::Vector<3> linearAccel;
 
+// Main data variables
+
+// this array is not used at the moment
 double altimeterValues[PREVIOUS_POINTS];
 double alt;
 unsigned int alt_index = 0;
@@ -151,20 +187,27 @@ double microSieverts = 0.0;
 double temp = 0.0;
 double pressure = 0.0;
 
-// do nothing for the moment. This will eventually actuate a servo at a certain altitude;
-
-
+// csv seperator to write between each point
 const char SEP[] = {", "};
 
+// main polling function
 void pollSensors() {
+  // if the switch is on, return; we can't use the SD Card
+  if (checkSwitch()) {
+    Serial.println(F("On SD Lock Mode..."));
+    return;
+  }
+  // re-open data file for writing
   dataFile = SD.open(SD_DATA_FILE, FILE_WRITE);
-  
+
+  //collect data
 	linearAccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
   gravitAccel = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
   alt = baro.getAltitude();
   temp = baro.getTemperature();
   pressure = baro.getPressure();
 
+  // update altimeter array
   for (int i = 1; i < PREVIOUS_POINTS; i++) {
     altimeterValues[i] = altimeterValues[i - 1];
   }
@@ -188,14 +231,18 @@ void pollSensors() {
   writeCSVPoint(temp);
   writeCSVPoint(pressure);  
 
+  //check to make sure we can write (this shouldn't be an issue if we're sleeping for 15s each loop,
+  // it's just a safeguard in case that sleep time is changed
   if(currentTime - previousTime > LOG_PERIOD) {
     Serial.println(F("logging"));
     Serial.println(F("uSV: "));
     Serial.println(microSieverts, DEC);
     Serial.println(currentTime - previousTime, DEC);
+    // do the conversion
     microSieverts = geigerCounts * TIME_PERIOD_MULTIPLIER * CPM_CONVERSION_FACTOR;
     // reset geigerCounts
 
+    // reset to 0
     geigerCounts = 0;
   } 
 
@@ -218,56 +265,4 @@ void writeCSVLastPoint(double data) {
 void checkAltimeter() {
   return;
 }
-
-/*
-
-// CONSTANTS USEFUL FOR DATA LOGGING
-#define LINE_FMT "%s, %s, %s, %s, %s, %s, %s, %s"
-
-// "n,n,n,n,n,n,n,n"
-// six data points, space + comma, null terminator.
-#define N_POINTS 8
-#define PREC 6 
-#define BUF_LEN (PREC + 3)
-#define MAX_LINE_LENGTH N_POINTS * BUF_LEN + (N_POINTS-1) + 1  
-char line[MAX_LINE_LENGTH];
-
-char xAccel[BUF_LEN], yAccel[BUF_LEN], zAccel[BUF_LEN], gXAccel[BUF_LEN], gYAccel[BUF_LEN], gZAccel[BUF_LEN];
-char altBuf[BUF_LEN];
-char radBuf[BUF_LEN]; //not used for now.
-
-void pollSensors() {
-  linearAccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
-  gravitAccel = bno.getVector(Adafruit_BNO055::VECTOR_GRAVITY);
-  alt = baro.getAltitude();
-
-  for (int i = 1; i < PREVIOUS_POINTS; i++) {
-    altimeterValues[i] = altimeterValues[i - 1];
-  }
-  altimeterValues[0] = alt;
-
-  convertDouble(linearAccel.x(), xAccel, sizeof xAccel);
-  convertDouble(linearAccel.y(), yAccel, sizeof yAccel);
-  convertDouble(linearAccel.z(), zAccel, sizeof zAccel);
-
-  convertDouble(gravitAccel.x(), gXAccel, sizeof gXAccel);
-  convertDouble(gravitAccel.y(), gYAccel, sizeof gYAccel);
-  convertDouble(gravitAccel.z(), gZAccel, sizeof gZAccel);
-
-  convertDouble(alt, altBuf, sizeof altBuf);
-  convertDouble(radiation, radBuf, sizeof radBuf);
-
-  Serial.println(linearAccel.x(), DEC);
-  Serial.println(xAccel);
-  Serial.println(gravitAccel.z());
-
-  int n = snprintf(line, sizeof line, LINE_FMT, xAccel, yAccel, zAccel, gXAccel, gYAccel, gZAccel, altBuf, radBuf);
-  Serial.println(line);
-}
-
-void convertDouble(double d, char *buf, size_t buf_len) {
-  if (!buf) return;
-  dtostrf(d, buf_len-1, 4, buf); 
-  buf[buf_len-1] = '\0';
-}*/
 
